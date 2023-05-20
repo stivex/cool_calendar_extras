@@ -1,0 +1,382 @@
+<?php
+
+use Drupal\Component\Utility\Html;
+use Drupal\Core\Url;
+use Drupal\Core\Render\BubbleableMetadata;
+
+/**
+* Function that with a node identifier it will send a reminder email to user
+*/
+function sendReminder($node_id, $field_user_to, $field_smartdate, $email_subject, $email_message) {
+	
+	//Module name
+	$module_name = 'cool_calendar_extras';
+	
+	//We get the services
+	$mailManager = \Drupal::service('plugin.manager.mail');
+	$dateFormatter = \Drupal::service('date.formatter');
+	$token = \Drupal::token();
+	
+	//Template/configuration identifier that it will be used for sending the mail
+	$key = 'reminder_message';
+	
+	//We load the object (node) with parameter id
+	$node = \Drupal::entityTypeManager()->getStorage('node')->load($node_id);
+	
+	//The parameter $reminder_user_to says us who we have to send the reminder
+	//- The content author user ($reminder_user_to = none)
+	//- The user indicated into an entity field ($reminder_user_to = name of field where we can get the user)
+	
+	//We try to obtain the mail address
+	if ($field_user_to == 'none') {
+		
+		//It will be the content author user
+		$owner_author_id = $node->getOwnerId();
+		$owner_author = \Drupal\user\Entity\User::load($owner_author_id);
+		
+		$to = $owner_author->getEmail();
+		
+	} else {
+		
+		//It will be the user indicated into an entity field
+		$user_id = $node->get($field_user_to)->target_id;
+		
+		//If it doesn't set a user into the field, we don't know who to send the reminder, in this case we don't continue with the process
+		if (empty($user_id)) {
+			return;
+		}
+		
+		//With the user id we retrieve the user
+		$user = \Drupal\user\Entity\User::load($user_id);
+		
+		//We get the user email
+		$to = $user->getEmail();
+	}
+	
+	//We get the current date with the Drupal format configured
+	$date_today = date_create()->settime(0,0);
+	
+	//$date_start_formatted = $dateFormatter->format($date_today_start_timestamp, 'html_date');
+	
+	//We get the node URL
+	$node_url = Drupal\Core\Url::fromRoute('entity.node.canonical', ['node' => $node_id], ['absolute' => TRUE]);
+	$node_url_str = $node_url->toString() . '/edit';
+	
+	//We get the type of content name
+	$type_of_content_name = $node->type->entity->label();
+	
+	//Subject that email will have
+	$title = $token->replacePlain($email_subject, array('node' => $node, 'field_smartdate' => $field_smartdate, 'date_today' => $date_today));
+	
+	//Email body
+	$message = $token->replacePlain($email_message, array('node' => $node, 'field_smartdate' => $field_smartdate, 'date_today' => $date_today));
+	
+	//Email language
+	$langcode = \Drupal::currentUser()->getPreferredLangcode();
+	
+	$params['title'] = $title;
+	$params['message'] = $message;
+	
+	$result = $mailManager->mail($module_name, $key, $to, $langcode, $params, NULL, true);
+	
+	if ($result['result'] != true) {
+		$message = t('There was a problem sending the reminder email to @email.', ['@email' => $to]);
+		\Drupal::logger($module_name)->error($message);
+		return;
+	} else {
+		\Drupal::logger($module_name)->notice(t('A reminder has been sent to @to for node id: @id', ['@to' => $to, '@id' => $node_id]));
+	}
+	
+}
+
+/**
+* Implements hook_theme().
+* This hook allows defining new templates that has this module to have available and to be used
+*/
+function cool_calendar_extras_theme($existing, $type, $theme, $path) {
+	
+	return [
+		'cool_calendar_extras_legend_calendar_block_table' => [
+			'variables' => [
+				'headers' => NULL,
+				'rows' => NULL
+			],
+			'template' => 'cool-calendar-extras-legend-calendar-block-table',
+		],
+	];
+	
+}
+
+/**
+ * Implements hook_entity_type_alter().
+ * 
+ * This hook do the validation on entity level that we want to validate
+ */
+function cool_calendar_extras_entity_type_alter(array &$entity_types) {
+	
+	$entity_types['node']->addConstraint('OverlappedDate');
+	
+}
+
+/**
+* Implements hook_mail().
+* This hook is the responsible to prepare the messages that they will be sent with the MailManager service
+*/
+function cool_calendar_extras_mail($key, &$message, $params) {
+	
+	$options = [
+		'langcode' => $message['langcode'],
+	];
+	
+	switch ($key) {
+		
+		case 'reminder_message':
+			
+			$headers = array(
+				'MIME-Version' => '1.0',
+				'Content-Type' => 'text/html; charset=utf-8; format=flowed',
+				'Content-Transfer-Encoding' => '8Bit',
+				'X-Mailer' => 'Drupal',
+			);
+			
+			foreach ($headers as $key => $value) {
+				$message['headers'][$key] = $value;
+			}
+			
+			$username = \Drupal::currentUser()->getDisplayName();
+			
+			$site_name = \Drupal::config('system.site')->get('name');
+			
+			$message['from'] = \Drupal::config('system.site')->get('mail');
+			
+			$message['subject'] = Html::escape($params['title']);
+			
+			$message['body'][] = Html::escape($params['message']); //With the SafeMarkup we avoid to include not permitted text
+			
+			break;
+			
+	}
+	
+}
+
+/**
+* Implements hook_cron().
+* This hook is the responsible to send email messages (reservation reminders for today)
+*/
+function cool_calendar_extras_cron() {
+	
+	//Module name
+	$name_module = 'cool_calendar_extras';
+	
+	//We retrieve the configuration that has set from the admin section
+	//Here we can't do service injection because we are in a PHP file with static methods
+	$config = \Drupal::config('cool_calendar_extras.settings');
+	
+	//We check if we can get the module configuration
+	if (is_null($config)) {
+		//No module configuration exist
+		return;
+	}
+	
+	//We get the current date without hour-minute
+	$date_today_start = date_create()->settime(0,0);
+	$date_today_end = date_create()->settime(0,0);
+	$date_today_end->modify('+1 day');
+	
+	//We convert the dates to timestamp 
+	$date_today_start_timestamp = date_timestamp_get($date_today_start);
+	$date_today_end_timestamp = date_timestamp_get($date_today_end);
+	
+	//Before to continue, we check if today we already send the reminders by email
+	$last_reminder_execution = $config->get($name_module . '_last_reminder_execution');
+	
+	if ($last_reminder_execution >= $date_today_start_timestamp) {
+		//The cron has been already executed for today, we don't continue with the process
+		$dateFormatter = \Drupal::service('date.formatter');
+		$date_start_formatted = $dateFormatter->format($date_today_start_timestamp, 'html_date');
+		\Drupal::logger($name_module)->notice(t('Today (@date) the email reminders already have been sent.', ['@date' => $date_start_formatted]));
+		return;
+	}
+	
+	//List (key/value) with all types of content available (this function is included into Drupal API)
+	$types_of_content = node_type_get_names();
+	
+	//We iterate all types of content available
+	foreach ($types_of_content as $type_id => $type_name) {
+		
+		//We generate the name of configuration fields
+		$config_check = $name_module . '_' . $type_id . '_reminder' . '_check';
+		$config_user = $name_module . '_' . $type_id . '_reminder' . '_user';
+		$config_subject = $name_module . '_' . $type_id . '_reminder' . '_subject';
+		$config_message = $name_module . '_' . $type_id . '_reminder' . '_message';
+		$config_smartdate = $name_module . '_' . $type_id . '_constraint' . '_smartdate';
+		
+		//We check if it exists a configuration for this type of content
+		if (!is_null($config->get($config_check)) && !is_null($config->get($config_user)) && !is_null($config->get($config_smartdate)) && !is_null($config->get($config_subject)) && !is_null($config->get($config_message))) {
+			
+			//A configuration exists
+			$reminder_enabled = $config->get($config_check);
+			$reminder_user_to = $config->get($config_user);
+			$constraint_smartdate = $config->get($config_smartdate);
+			$subject = $config->get($config_subject);
+			$message = $config->get($config_message);
+			
+			//We check if for this type of content the email reminders are enabled
+			if ($reminder_enabled != 0) {
+				
+				//We get who we have to send the reminder:
+				//- The content author user ($reminder_user_to = none)
+				//- The user indicated into an entity field ($reminder_user_to = name of field where we can get the user)
+				
+				//\Drupal::logger('cool_calendar_extras')->notice('HABILITAT PER: ' . $config_check . ' -- ' . $reminder_user_to);
+				
+				//We do a query to obtain all nodes that belongs in this type of content that with date of today has a reservation
+				
+				$query = \Drupal::entityTypeManager()->getStorage('node')->getQuery();
+				
+				$query->accessCheck(FALSE); //TRUE = that only take into account visible results for user, FALSE = all results
+				$query->condition('status', 1); //Only which are registered
+				$query->condition('type', $type_id); //That the type of content be a specific
+				
+				//The reservations that start today
+				$andGroup = $query->andConditionGroup();
+				$andGroup->condition($constraint_smartdate . '.value', $date_today_start_timestamp, '>=');
+				$andGroup->condition($constraint_smartdate . '.end_value', $date_today_end_timestamp, '<');
+				$query->condition($andGroup);
+				
+				//We show the SQL results about the generated query
+				//\Drupal::logger('cool_calendar_extras')->notice('QUERY: ' . $config_check . ': ' . $query->__toString());
+				
+				//We get the nodes id list
+				$nodes_id = $query->execute();
+				
+				//\Drupal::logger('cool_calendar_extras')->notice('RESULT: ' . $config_check . ': ' . implode(',', $nodes_id));
+				
+				//For each reservation that we have found for today we will send an email
+				foreach ($nodes_id as $node_id) {
+					sendReminder($node_id, $reminder_user_to, $constraint_smartdate, $subject, $message);
+				}
+				
+			}
+			
+		}
+		
+	}
+	
+	//After emails sent (if someone existed) we save the last sending into the configuration to avoid email sending every time that cron executes for today
+	$config_edit = \Drupal::service('config.factory')->getEditable('cool_calendar_extras.settings');
+	$config_edit->set($name_module . '_last_reminder_execution', $date_today_start_timestamp);
+	$config_edit->save();
+	
+}
+
+/**
+* Implements hook_token_info().
+* This hook allows adding new tokens to be available and used
+*/
+function cool_calendar_extras_token_info() {
+	
+	$type = [
+		'name' => t('Nodes'),
+		'description' => t('Tokens related to individual nodes.'),
+		'needs-data' => 'node',
+	];
+	
+	$node['reservations_for_today'] = [
+		'name' => t("Reservations for today"),
+		'type' => 'date',
+	];
+	
+	return [
+			'types' => [
+			'node' => $type,
+		],
+			'tokens' => [
+			'node' => $node,
+		],
+	];
+	
+}
+
+/**
+* Implements hook_tokens().
+* This hook replace the text tokens to values
+* In the hook_token_info() are where tokens are defined that hook_tokens() will have to replace
+* This hook will execute when token_replace() orr $token->replacePlain() functions will be called
+*/
+function cool_calendar_extras_tokens($type, $tokens, array $data, array $options, BubbleableMetadata $bubbleable_metadata) {
+	
+	$token_service = \Drupal::token();
+	
+	$url_options = [
+		'absolute' => TRUE,
+	];
+	
+	if (isset($options['langcode'])) {
+		$url_options['language'] = \Drupal::languageManager()->getLanguage($options['langcode']);
+		$langcode = $options['langcode'];
+	} else {
+		$langcode = NULL;
+	}
+	
+	$replacements = [];
+	
+	if ($type == 'node' && !empty($data['node'])) {
+		
+		$node = $data['node'];
+		
+		foreach ($tokens as $name => $original) {
+			
+			 switch ($name) {
+				 
+				 case 'reservations_for_today':
+					
+					if (!empty($data['field_smartdate']) && !empty($data['date_today'])) {
+						
+						//We get the field name that is configured as smartdate date field
+						$field_smartdate = $data['field_smartdate'];
+						
+						//We get from the smartdate field the reservation date
+						$smartdate = $node->get($field_smartdate)->getValue();
+						
+						//We calculate start and end hour
+						$date_today = $data['date_today'];
+						$date_today_start = $date_today;
+						$date_today_end = clone $date_today;
+						$date_today_end->modify('+1 day');
+						
+						$date_today_start_timestamp = date_timestamp_get($date_today_start);
+						$date_today_end_timestamp = date_timestamp_get($date_today_end);
+						
+						//We get the node recurrences that take a place today
+						$divider = ', ';
+						$recurrences = '';
+						
+						foreach ($smartdate as $index => $date) {
+							
+							if ($date['value'] >= $date_today_start_timestamp && $date['value'] < $date_today_end_timestamp) {
+								$recurrences .= date('d/m/Y H:i', $date['value']) . ' - ' . date('d/m/Y H:i', $date['end_value']) . $divider;
+							}
+							
+						}
+						
+						//We delete the last string divider
+						$position = strrpos($recurrences, $divider);
+						if($position !== false) {
+							$recurrences = substr_replace($recurrences, '', $position, strlen($divider));
+						}
+						
+						$replacements[$original] = $recurrences;
+						
+					}
+					
+					break;
+			 }
+			
+		}
+		
+	}
+	
+	return $replacements;
+	
+}

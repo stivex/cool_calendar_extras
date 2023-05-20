@@ -1,0 +1,16 @@
+table.calendar-legend {
+  width: 100%;
+  font-size: 0.7em;
+}
+
+table.calendar-legend th:nth-child(2) { 
+  width: 25px;
+}
+
+table.calendar-legend th {
+  text-align: left;
+}
+
+table.calendar-legend tr.even td {
+  background-color:#eeeeee;
+}

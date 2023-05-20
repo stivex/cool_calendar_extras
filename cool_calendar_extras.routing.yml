@@ -1,0 +1,7 @@
+cool_calendar_extras.settings:
+    path: '/admin/config/regional/cool_calendar_extras'
+    defaults:
+        _form: '\Drupal\cool_calendar_extras\Form\CoolCalendarExtrasSettingsForm'
+        _title: 'Cool Calendar Extras Settings'
+    requirements:
+        _permission: 'cool form access'

@@ -1,0 +1,5 @@
+cool_calendar_extras.settings:
+    title: Cool Calendar Extras Settings
+    route_name: cool_calendar_extras.settings
+    parent: system.admin_config_regional
+    description: 'Settings about overlapping events constraint and reminders.'

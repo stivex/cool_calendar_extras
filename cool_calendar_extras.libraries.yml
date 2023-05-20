@@ -1,0 +1,5 @@
+cool_calendar_extras.css:
+    version: 1.x
+    css:
+        theme:
+            css/cool_calendar_extras.css: {}

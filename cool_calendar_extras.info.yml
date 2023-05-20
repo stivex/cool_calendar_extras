@@ -1,0 +1,11 @@
+name: Cool Calendar Extras
+type: module
+description: 'Add some extra calendar and date functionalities on Full Calendar View and Smart Date modules'
+package: 'Cool tools'
+version: 1.0.0
+core_version_requirement: ^10
+configure: cool_calendar_extras.settings
+dependencies:
+  - drupal:fullcalendar_view
+  - drupal:smart_date
+  - drupal:token

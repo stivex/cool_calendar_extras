@@ -1,0 +1,36 @@
+{#
+/**
+  * @file
+  * Default theme implementation for 'cool-calendar-extras-legend-calendar-block-table'.
+  *
+  * Available variables:
+  * - header.
+  * - rows.
+  */
+#}
+{{ attach_library('cool_calendar_extras/cool_calendar_extras.css') }}
+
+<table class="calendar-legend" >
+    <thead>
+        <tr>
+            {% for header in headers %}
+                <th>{{ header }}</th>
+            {% endfor %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+            
+            {% if (loop.index is even) %}
+                <tr class="even" >
+            {% else %}
+                <tr class="odd" >
+            {% endif %}
+                
+                    <td>{{ row[0] }}</td>
+                    <td><div style="background-color:{{ row[1] }};color:{{ row[1] }}" title="{{ row[0] }}">&nbsp;</div></td>
+                </tr>
+            
+        {% endfor %}
+    </tbody>
+</table>
